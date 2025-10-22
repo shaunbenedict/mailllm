@@ -1,4 +1,4 @@
-# Email LLM Server
+# MailLLM Server
 
 **Commit Date:** 23/10/2025, 1:00 AM
 
