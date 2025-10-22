@@ -10,6 +10,7 @@ import time
 import threading
 from dotenv import load_dotenv
 from ai_service import email_ai_response
+from flask import Flask, jsonify, request
 
 # Load environment variables
 load_dotenv()
@@ -17,6 +18,9 @@ load_dotenv()
 # Get credentials from .env file
 EMAIL = os.getenv('EMAIL')
 PASSWORD = os.getenv('PASSWORD')
+
+# Initialize Flask app
+app = Flask(__name__)
 
 # Ensure logs directory exists
 os.makedirs('./logs', exist_ok=True)
@@ -295,6 +299,140 @@ def process_emails_thread():
             print(f"ERROR [PROCESS THREAD]: {e}")
             time.sleep(30)
 
+def flask_server_thread():
+    """Thread 3: Run Flask server for API endpoints"""
+    
+    @app.route('/all', methods=['GET'])
+    def get_all_emails():
+        """API endpoint to get all emails"""
+        try:
+            # Get number of emails from query parameter (default: all)
+            num_emails = request.args.get('num', default=None, type=int)
+            
+            # Load all emails
+            emails = load_json_file(ALL_MAIL_FILE)
+            
+            # Limit if num is specified
+            if num_emails:
+                emails = emails[:num_emails]
+            
+            return jsonify({
+                "success": True,
+                "type": "all",
+                "count": len(emails),
+                "emails": emails
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/unread', methods=['GET'])
+    def get_unread_emails():
+        """API endpoint to get unread emails"""
+        try:
+            # Get number of emails from query parameter (default: all)
+            num_emails = request.args.get('num', default=None, type=int)
+            
+            # Load unread emails
+            emails = load_json_file(UNREAD_MAIL_FILE)
+            
+            # Limit if num is specified
+            if num_emails:
+                emails = emails[:num_emails]
+            
+            return jsonify({
+                "success": True,
+                "type": "unread",
+                "count": len(emails),
+                "emails": emails
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/responded', methods=['GET'])
+    def get_responded_emails():
+        """API endpoint to get responded emails"""
+        try:
+            # Get number of emails from query parameter (default: all)
+            num_emails = request.args.get('num', default=None, type=int)
+            
+            # Load responded emails
+            emails = load_json_file(RESPONDED_MAIL_FILE)
+            
+            # Limit if num is specified
+            if num_emails:
+                emails = emails[:num_emails]
+            
+            return jsonify({
+                "success": True,
+                "type": "responded",
+                "count": len(emails),
+                "emails": emails
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/receive', methods=['GET'])
+    def receive_emails():
+        """API endpoint to receive emails from JSON files"""
+        try:
+            # Get type parameter (default: 'unread')
+            mail_type = request.args.get('type', default='unread', type=str)
+            
+            if mail_type == 'all':
+                emails = load_json_file(ALL_MAIL_FILE)
+            elif mail_type == 'unread':
+                emails = load_json_file(UNREAD_MAIL_FILE)
+            elif mail_type == 'responded':
+                emails = load_json_file(RESPONDED_MAIL_FILE)
+            else:
+                return jsonify({"error": "Invalid type. Use 'all', 'unread', or 'responded'"}), 400
+            
+            return jsonify({
+                "success": True,
+                "type": mail_type,
+                "count": len(emails),
+                "emails": emails
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/stats', methods=['GET'])
+    def get_stats():
+        """API endpoint to get email statistics"""
+        try:
+            all_mails = load_json_file(ALL_MAIL_FILE)
+            unread_mails = load_json_file(UNREAD_MAIL_FILE)
+            responded_mails = load_json_file(RESPONDED_MAIL_FILE)
+            
+            return jsonify({
+                "success": True,
+                "stats": {
+                    "total_emails": len(all_mails),
+                    "unread_emails": len(unread_mails),
+                    "responded_emails": len(responded_mails)
+                }
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/', methods=['GET'])
+    def home():
+        """Home endpoint"""
+        return jsonify({
+            "message": "MailLLM Server API",
+            "status": "running",
+            "endpoints": {
+                "/all": "GET - Get all emails (query param: ?num=10)",
+                "/unread": "GET - Get unread emails (query param: ?num=10)",
+                "/responded": "GET - Get responded emails (query param: ?num=10)",
+                "/receive": "GET - Receive emails (query param: ?type=unread|all|responded)",
+                "/stats": "GET - Get email statistics"
+            }
+        })
+    
+    # Run Flask server
+    app.run(debug=False, host='0.0.0.0', port=5000, use_reloader=False)
+
 def main():
     """Main function to start both threads"""
     
@@ -305,12 +443,15 @@ def main():
     # Create threads
     fetch_thread = threading.Thread(target=fetch_emails_thread, daemon=True)
     process_thread = threading.Thread(target=process_emails_thread, daemon=True)
+    flask_thread = threading.Thread(target=flask_server_thread, daemon=True)
     
     # Start threads
     fetch_thread.start()
     process_thread.start()
+    flask_thread.start()
     
     print("MailLLM Server Running... (Press Ctrl+C to stop)")
+    print("Flask API available at http://localhost:5000")
     
     try:
         # Keep main thread alive

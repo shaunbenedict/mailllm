@@ -1,164 +1,128 @@
-import imaplib
-import smtplib
-import email
-from email.header import decode_header
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import os
+import json
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 
 # Load environment variables
 load_dotenv()
 
-# Get credentials from .env file
-EMAIL = os.getenv('EMAIL')
-PASSWORD = os.getenv('PASSWORD')
-
 # Initialize Flask app
 app = Flask(__name__)
 
-def connect_to_gmail():
-    """Connect to Gmail using IMAP"""
-    try:
-        # Connect to Gmail's IMAP server
-        imap = imaplib.IMAP4_SSL("imap.gmail.com")
-        
-        # Login
-        if EMAIL and PASSWORD:
-            imap.login(EMAIL, PASSWORD)
-            print(f"Successfully logged in as {EMAIL}")
-        else:
-            print("Email or password not found")
-            return None
-        
-        return imap
-    except Exception as e:
-        print(f"Error connecting to Gmail: {e}")
-        return None
+# JSON file paths
+ALL_MAIL_FILE = './logs/AllMail.json'
+UNREAD_MAIL_FILE = './logs/UnreadMail.json'
+RESPONDED_MAIL_FILE = './logs/RespondedMail.json'
 
-def get_emails(imap, folder="INBOX", num_emails=10):
-    """Fetch emails from specified folder and return as list"""
-    emails_list = []
-    
+def load_json_file(filepath):
+    """Load JSON file, return empty list if file doesn't exist"""
     try:
-        # Select the mailbox (folder)
-        status, messages = imap.select(folder)
-        
-        # Get total number of emails
-        total_emails = int(messages[0])
-        print(f"Total emails in {folder}: {total_emails}")
-        
-        # Fetch the last 'num_emails' emails
-        start = max(1, total_emails - num_emails + 1)
-        
-        for i in range(total_emails, start - 1, -1):
-            # Fetch the email by ID
-            res, msg = imap.fetch(str(i), "(RFC822)")
-            
-            for response in msg:
-                if isinstance(response, tuple):
-                    # Parse the email content
-                    msg = email.message_from_bytes(response[1])
-                    
-                    # Decode email subject
-                    subject, encoding = decode_header(msg["Subject"])[0]
-                    if isinstance(subject, bytes):
-                        subject = subject.decode(encoding if encoding else "utf-8")
-                    
-                    # Get sender
-                    from_ = msg.get("From")
-                    
-                    # Get date
-                    date = msg.get("Date")
-                    
-                    # Get email body
-                    body_text = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            content_type = part.get_content_type()
-                            content_disposition = str(part.get("Content-Disposition"))
-                            
-                            try:
-                                body = part.get_payload(decode=True)
-                                if body and content_type == "text/plain" and "attachment" not in content_disposition:
-                                    if isinstance(body, bytes):
-                                        body_text = body.decode()
-                                    else:
-                                        body_text = str(body)
-                                    break
-                            except:
-                                pass
-                    else:
-                        # Simple email
-                        body = msg.get_payload(decode=True)
-                        if body:
-                            if isinstance(body, bytes):
-                                body_text = body.decode()
-                            else:
-                                body_text = str(body)
-                    
-                    # Create email dict
-                    email_data = {
-                        "subject": subject,
-                        "from": from_,
-                        "date": date,
-                        "body": body_text
-                    }
-                    
-                    emails_list.append(email_data)
-                    
-                    # Print to console
-                    print("\n" + "="*50)
-                    print(f"Subject: {subject}")
-                    print(f"From: {from_}")
-                    print(f"Date: {date}")
-                    print(f"Body: {body_text[:200]}...")
-        
-        print("\n" + "="*50)
-        
+        if os.path.exists(filepath):
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return []
     except Exception as e:
-        print(f"Error fetching emails: {e}")
-    
-    return emails_list
+        print(f"ERROR loading {filepath}: {e}")
+        return []
 
-@app.route('/receive', methods=['GET'])
-def receive_emails():
-    """API endpoint to receive emails"""
-    if not EMAIL or not PASSWORD:
-        return jsonify({"error": "EMAIL and PASSWORD must be set in .env file"}), 500
-    
-    # Get number of emails from query parameter (default: 10)
-    num_emails = request.args.get('num', default=10, type=int)
-    
-    # Connect to Gmail
-    imap = connect_to_gmail()
-    
-    if not imap:
-        return jsonify({"error": "Failed to connect to Gmail"}), 500
-    
-    # Get emails from INBOX
-    emails = get_emails(imap, folder="INBOX", num_emails=num_emails)
-    
-    # Close connection
-    imap.close()
-    imap.logout()
-    print("\nDisconnected from Gmail")
-    
-    return jsonify({
-        "success": True,
-        "count": len(emails),
-        "emails": emails
-    })
+@app.route('/all', methods=['GET'])
+def get_all_emails():
+    """API endpoint to get all emails"""
+    try:
+        # Get number of emails from query parameter (default: all)
+        num_emails = request.args.get('num', default=None, type=int)
+        
+        # Load all emails
+        emails = load_json_file(ALL_MAIL_FILE)
+        
+        # Limit if num is specified
+        if num_emails:
+            emails = emails[:num_emails]
+        
+        return jsonify({
+            "success": True,
+            "type": "all",
+            "count": len(emails),
+            "emails": emails
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/unread', methods=['GET'])
+def get_unread_emails():
+    """API endpoint to get unread emails"""
+    try:
+        # Get number of emails from query parameter (default: all)
+        num_emails = request.args.get('num', default=None, type=int)
+        
+        # Load unread emails
+        emails = load_json_file(UNREAD_MAIL_FILE)
+        
+        # Limit if num is specified
+        if num_emails:
+            emails = emails[:num_emails]
+        
+        return jsonify({
+            "success": True,
+            "type": "unread",
+            "count": len(emails),
+            "emails": emails
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/responded', methods=['GET'])
+def get_responded_emails():
+    """API endpoint to get responded emails"""
+    try:
+        # Get number of emails from query parameter (default: all)
+        num_emails = request.args.get('num', default=None, type=int)
+        
+        # Load responded emails
+        emails = load_json_file(RESPONDED_MAIL_FILE)
+        
+        # Limit if num is specified
+        if num_emails:
+            emails = emails[:num_emails]
+        
+        return jsonify({
+            "success": True,
+            "type": "responded",
+            "count": len(emails),
+            "emails": emails
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/stats', methods=['GET'])
+def get_stats():
+    """API endpoint to get email statistics"""
+    try:
+        all_mails = load_json_file(ALL_MAIL_FILE)
+        unread_mails = load_json_file(UNREAD_MAIL_FILE)
+        responded_mails = load_json_file(RESPONDED_MAIL_FILE)
+        
+        return jsonify({
+            "success": True,
+            "stats": {
+                "total_emails": len(all_mails),
+                "unread_emails": len(unread_mails),
+                "responded_emails": len(responded_mails)
+            }
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/', methods=['GET'])
 def home():
     """Home endpoint"""
     return jsonify({
-        "message": "Email Server API",
+        "message": "MailLLM Email API",
         "endpoints": {
-            "/receive": "GET - Receive emails (query param: ?num=10)",
-            "/send": "POST - Send 'HELLO WORLD' email (body: {\"to\": \"email@example.com\"})"
+            "/all": "GET - Get all emails (query param: ?num=10)",
+            "/unread": "GET - Get unread emails (query param: ?num=10)",
+            "/responded": "GET - Get responded emails (query param: ?num=10)",
+            "/stats": "GET - Get email statistics"
         }
     })
 
